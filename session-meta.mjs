@@ -4,7 +4,7 @@
 /**
  * Resolve the main checkout of the git repository that contains `dir`.
  * A linked worktree resolves to its main repository. A missing path resolves through its
- * nearest existing ancestor. Results (also misses) are cached for `ttlMs`.
+ * nearest existing ancestor. Results (also misses) are cached (see configureRepoCache). If git is missing or fails, the result is null.
  * @param {string} dir absolute path
  * @returns {Promise<{ root: string, name: string } | null>}
  */
@@ -12,6 +12,14 @@ export async function resolveRepo(dir) { throw new Error('not implemented'); }
 
 /** Forget every cached lookup (tests, and when a folder becomes a repo). */
 export function clearRepoCache() { throw new Error('not implemented'); }
+
+/**
+ * Set the cache lifetime and the clock. Defaults: ttlMs 10 minutes, now = Date.now.
+ * A lookup cached at time t is reused while now() - t < ttlMs, and looked up again after.
+ * Hits and misses use the same lifetime. Omitted options keep their current value.
+ * @param {{ ttlMs?: number, now?: () => number }} options
+ */
+export function configureRepoCache(options) { throw new Error('not implemented'); }
 
 /**
  * Decide the project of a session.

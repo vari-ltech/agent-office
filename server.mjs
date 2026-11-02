@@ -16,12 +16,13 @@ const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 const LIVE_DIR = path.join(CLAUDE_DIR, 'sessions');
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const PERSONALITIES_FILE = path.join(ROOT, 'data', 'personalities.json');
-const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
-const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
-const SETTINGS_FILE = path.join(ROOT, 'data', 'settings.json');
-const BOARD_FILE = path.join(ROOT, 'data', 'board.json');
-const CHATS_FILE = path.join(ROOT, 'data', 'chats.json');
+const DATA_DIR = process.env.OFFICE_DATA_DIR || path.join(ROOT, 'data'); // tests point this at a temp folder
+const PERSONALITIES_FILE = path.join(DATA_DIR, 'personalities.json');
+const HIDDEN_FILE = path.join(DATA_DIR, 'hidden.json');
+const REPORTS_DIR = path.join(DATA_DIR, 'reports');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const BOARD_FILE = path.join(DATA_DIR, 'board.json');
+const CHATS_FILE = path.join(DATA_DIR, 'chats.json');
 const WORKTREES_DIR = path.join(os.homedir(), '.agent-office', 'worktrees');
 const DEFAULT_SETTINGS = { hiring: { enabled: true, minLevel: 5, maxActive: 3 } };
 // Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
@@ -314,7 +315,7 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null, to
 // ---------- PRs & MRs: tracking and "all hands" reviews ----------
 // Repos come from the folders your sessions run in. GitLab repos are read with `glab`, GitHub
 // repos with `gh` (both run inside the repo, so they use its remote and your existing login).
-const REVIEWS_FILE = path.join(ROOT, 'data', 'reviews.json');
+const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
 const sh = (cmd, args, cwd) => new Promise(resolve => execFile(cmd, args, { cwd, timeout: 30e3, maxBuffer: 20 * 1024 * 1024 }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || err?.message || '') })));
 async function discoverRepos() {
   const roots = new Map();
@@ -580,7 +581,7 @@ async function deleteAgent(id, { trashTranscript = false } = {}) {
 // Round 1: every participant proposes ideas in their own voice (personality + what they work on).
 // Round 2 (optional): everyone reacts to the others' ideas. Then the PM synthesizes.
 // "deep" participants answer from a throwaway fork of their own session (full memory).
-const BRAINSTORMS_FILE = path.join(ROOT, 'data', 'brainstorms.json');
+const BRAINSTORMS_FILE = path.join(DATA_DIR, 'brainstorms.json');
 const brainstorms = new Map(); // id -> live state (also saved to disk when finished)
 const clipText = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
 async function participantBrief(id) {

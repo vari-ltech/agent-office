@@ -1,42 +1,84 @@
-// Which repository a session works in, and what to call it. Pure helpers, no dependencies.
-// Interface skeleton: implemented after the tests are written.
+// Which repository a session works in, and what to call it. No dependencies.
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+
+let ttlMs = 10 * 60e3;
+let now = Date.now;
+const cache = new Map(); // dir -> { at, value: Promise<{ root, name } | null> }
+
+/** Set the cache lifetime and the clock. Omitted options keep their current value. */
+export function configureRepoCache(options = {}) {
+  if (options.ttlMs !== undefined) ttlMs = options.ttlMs;
+  if (options.now !== undefined) now = options.now;
+}
+
+/** Forget every cached lookup. */
+export function clearRepoCache() { cache.clear(); }
+
+// The nearest directory that exists: a deleted worktree or a file path still points at its repo.
+function existingDir(dir) {
+  let d = path.resolve(dir);
+  for (;;) {
+    try { if (fs.statSync(d).isDirectory()) return d; } catch {}
+    const up = path.dirname(d);
+    if (up === d) return null;
+    d = up;
+  }
+}
+
+function gitLookup(dir) {
+  return new Promise(resolve => {
+    execFile('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+      { timeout: 5000, env: process.env }, (err, out) => {
+        if (err) return resolve(null);
+        const [top, common] = String(out).trim().split('\n');
+        if (!top || !common) return resolve(null);
+        // A linked worktree shares the main checkout's .git folder. A submodule's common dir
+        // is inside the parent's .git/modules, so it keeps its own top level.
+        const root = path.basename(common) === '.git' ? path.dirname(common) : top;
+        resolve({ root, name: path.basename(root) });
+      });
+  });
+}
 
 /**
- * Resolve the main checkout of the git repository that contains `dir`.
- * A linked worktree resolves to its main repository. A missing path resolves through its
- * nearest existing ancestor. Results (also misses) are cached (see configureRepoCache). If git is missing or fails, the result is null.
- * @param {string} dir absolute path
+ * Resolve the main checkout of the git repository that contains `dir`: a linked worktree
+ * resolves to its main repository, a missing path through its nearest existing ancestor.
+ * Hits and misses are cached; a missing or failing git gives null.
  * @returns {Promise<{ root: string, name: string } | null>}
  */
-export async function resolveRepo(dir) { throw new Error('not implemented'); }
-
-/** Forget every cached lookup (tests, and when a folder becomes a repo). */
-export function clearRepoCache() { throw new Error('not implemented'); }
-
-/**
- * Set the cache lifetime and the clock. Defaults: ttlMs 10 minutes, now = Date.now.
- * A lookup cached at time t is reused while now() - t < ttlMs, and looked up again after.
- * Hits and misses use the same lifetime. Omitted options keep their current value.
- * @param {{ ttlMs?: number, now?: () => number }} options
- */
-export function configureRepoCache(options) { throw new Error('not implemented'); }
+export function resolveRepo(dir) {
+  if (!dir) return Promise.resolve(null);
+  const start = existingDir(dir);
+  if (!start) return Promise.resolve(null);
+  const hit = cache.get(start);
+  if (hit && now() - hit.at < ttlMs) return hit.value;
+  const value = gitLookup(start); // concurrent lookups of one dir share this promise
+  cache.set(start, { at: now(), value });
+  return value;
+}
 
 /**
- * Decide the project of a session.
- * 1. The repository of `cwd` (source 'cwd').
- * 2. Otherwise the repository of the most recently edited directory in `editDirs` (source 'edits').
- * 3. Otherwise basename(cwd) (source 'folder'), or 'unknown' without a cwd.
+ * Decide the project of a session: the repository of `cwd`, else the repository of the most
+ * recently edited directory, else basename(cwd) ('unknown' without one).
+ * `repos` lists every repository found: cwd first, then edits by recency, without duplicates.
  * @param {{ cwd?: string|null, editDirs?: Array<{ dir: string, at: number }> }} input
- * @returns {Promise<{ project: string, repoRoot: string|null, repos: string[], source: 'cwd'|'edits'|'folder' }>}
- *   `repos` lists the root of every repository found (cwd first, then edits by recency, no duplicates).
  */
-export async function projectFor({ cwd, editDirs }) { throw new Error('not implemented'); }
+export async function projectFor({ cwd, editDirs } = {}) {
+  const byRecency = [...(editDirs || [])].sort((a, b) => b.at - a.at);
+  const [own, ...edited] = await Promise.all([resolveRepo(cwd), ...byRecency.map(e => resolveRepo(e.dir))]);
+  const repos = [];
+  for (const r of [own, ...edited]) if (r && !repos.includes(r.root)) repos.push(r.root);
+  const main = own || edited.find(Boolean);
+  if (main) return { project: main.name, repoRoot: main.root, repos, source: own ? 'cwd' : 'edits' };
+  return { project: cwd ? path.basename(cwd) : 'unknown', repoRoot: null, repos, source: 'folder' };
+}
 
-/**
- * Title precedence: live agents-view name → custom title → AI title → first 60 chars of last prompt → 'New session'.
- * Blank strings count as missing.
- * @param {{ customTitle?: string, title?: string, lastPrompt?: string }} transcript
- * @param {{ name?: string } | null} live
- * @returns {string}
- */
-export function titleFor(transcript, live) { throw new Error('not implemented'); }
+const filled = v => (typeof v === 'string' && v.trim() ? v : null);
+
+/** Title: agents-view name → custom title → AI title → last prompt (60 chars) → 'New session'. */
+export function titleFor(transcript = {}, live = null) {
+  return filled(live?.name) || filled(transcript.customTitle) || filled(transcript.title)
+    || filled(transcript.lastPrompt)?.slice(0, 60) || 'New session';
+}

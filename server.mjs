@@ -9,6 +9,7 @@ import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, demoStartBrainstorm, demoBrainstorm, demoBrainstormList } from './demo.mjs';
+import { projectFor, titleFor } from './session-meta.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -74,7 +75,7 @@ async function parseTranscript(file) {
   const raw = await fsp.readFile(file, 'utf8');
   const s = {
     id: path.basename(file, '.jsonl'), file, cwd: null, gitBranch: null, title: null,
-    lastPrompt: null, prompts: [], replies: [], files: {}, tools: {}, prs: [],
+    lastPrompt: null, prompts: [], replies: [], files: {}, editDirs: {}, tools: {}, prs: [],
     cost: 0, linesAdded: 0, linesRemoved: 0, firstAt: null, lastAt: null,
     lastActivity: null, messageCount: 0, model: null,
     // gamification counters
@@ -138,7 +139,13 @@ async function parseTranscript(file) {
             if (['WebFetch', 'WebSearch'].includes(c.name) || c.name.startsWith('mcp__claude-in-chrome')) s.webCalls++;
             if (['Agent', 'Task'].includes(c.name)) s.subagentsSpawned++;
             const fp = c.input?.file_path;
-            if (fp && ['Edit', 'Write', 'MultiEdit'].includes(c.name)) s.files[fp] = (s.files[fp] || 0) + 1;
+            if (fp && ['Edit', 'Write', 'MultiEdit'].includes(c.name)) {
+              s.files[fp] = (s.files[fp] || 0) + 1;
+              // where the edit landed, for the project: a relative path belongs to this line's cwd
+              const abs = path.isAbsolute(fp) ? fp : d.cwd ? path.resolve(d.cwd, fp) : null;
+              const at = Date.parse(d.timestamp) || 0;
+              if (abs) { const dir = path.dirname(path.normalize(abs)); s.editDirs[dir] = Math.max(s.editDirs[dir] || 0, at); }
+            }
             s.lastActivity = { at: d.timestamp, label: describeTool(c.name, c.input) };
             if (d.timestamp) s.events.push([Date.parse(d.timestamp), s.lastActivity.label]);
           }
@@ -153,6 +160,7 @@ async function parseTranscript(file) {
   s.prompts = s.prompts.slice(-15);
   s.replies = s.replies.slice(-8);
   s.files = Object.entries(s.files).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f, n]) => ({ path: f, edits: n }));
+  s.editDirs = Object.entries(s.editDirs).sort((a, b) => b[1] - a[1]).slice(0, 50).map(([dir, at]) => ({ dir, at }));
   s.tools = Object.entries(s.tools).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name, n }));
   s.updatedAt = stat.mtimeMs;
   cache.set(file, { mtimeMs: stat.mtimeMs, summary: s });
@@ -824,7 +832,8 @@ async function liveSessions() {
     try {
       const d = JSON.parse(await fsp.readFile(path.join(LIVE_DIR, n), 'utf8'));
       if (!d.sessionId || !pidAlive(d.pid)) continue;
-      out.set(d.sessionId, { status: d.status || 'idle', waitingFor: d.waitingFor, name: d.name, pid: d.pid, cwd: d.cwd, since: d.statusUpdatedAt || d.updatedAt, startedAt: d.startedAt });
+      out.set(d.sessionId, { status: d.status || 'idle', waitingFor: d.waitingFor, name: d.name, pid: d.pid, cwd: d.cwd, since: d.statusUpdatedAt || d.updatedAt, startedAt: d.startedAt,
+        kind: d.kind ?? null, jobId: d.jobId ?? null }); // kind 'bg' + jobId: a background job from Claude Code's agents view
     } catch {}
   }
   return out;
@@ -859,10 +868,11 @@ async function listSessions() {
     seen.add(id);
     const g = s.file ? gamify(s) : null;
     const helpers = l && s.file ? await activeHelpers(s) : [];
+    const where = await projectFor({ cwd: s.cwd || l?.cwd, editDirs: s.editDirs });
     sessions.push({
       ...g, helpers,
-      id, cwd: s.cwd || l?.cwd, project: path.basename(s.cwd || l?.cwd || 'unknown'),
-      title: s.customTitle || s.title || s.lastPrompt?.slice(0, 60) || l?.name || 'New session',
+      id, cwd: s.cwd || l?.cwd, project: where.project, repoRoot: where.repoRoot, repos: where.repos, projectSource: where.source,
+      title: titleFor(s, l), kind: l?.kind ?? null, jobId: l?.jobId ?? null,
       lastPrompt: s.lastPrompt, gitBranch: s.gitBranch, updatedAt: s.updatedAt || l?.startedAt,
       status: l ? l.status : 'offline', statusSince: l?.since, waitingFor: l?.waitingFor, live: !!l,
       activity: l?.status === 'busy' ? s.lastActivity?.label : null,

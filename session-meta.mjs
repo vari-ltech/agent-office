@@ -27,8 +27,18 @@ function existingDir(dir) {
   }
 }
 
+// At most MAX_GIT lookups run at once: the first poll can ask about hundreds of folders.
+const MAX_GIT = 6;
+let running = 0;
+const waiting = [];
+async function limited(fn) {
+  if (running >= MAX_GIT) await new Promise(go => waiting.push(go));
+  running++;
+  try { return await fn(); } finally { running--; waiting.shift()?.(); }
+}
+
 function gitLookup(dir) {
-  return new Promise(resolve => {
+  return limited(() => new Promise(resolve => {
     execFile('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
       { timeout: 5000, env: process.env }, (err, out) => {
         if (err) return resolve(null);
@@ -39,7 +49,7 @@ function gitLookup(dir) {
         const root = path.basename(common) === '.git' ? path.dirname(common) : top;
         resolve({ root, name: path.basename(root) });
       });
-  });
+  }));
 }
 
 /**

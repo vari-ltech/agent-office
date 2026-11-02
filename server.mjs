@@ -160,7 +160,7 @@ async function parseTranscript(file) {
   s.prompts = s.prompts.slice(-15);
   s.replies = s.replies.slice(-8);
   s.files = Object.entries(s.files).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f, n]) => ({ path: f, edits: n }));
-  s.editDirs = Object.entries(s.editDirs).sort((a, b) => b[1] - a[1]).slice(0, 50).map(([dir, at]) => ({ dir, at }));
+  s.editDirs = Object.entries(s.editDirs).sort((a, b) => b[1] - a[1]).map(([dir, at]) => ({ dir, at })); // all of them: a cap can drop the only repo
   s.tools = Object.entries(s.tools).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name, n }));
   s.updatedAt = stat.mtimeMs;
   cache.set(file, { mtimeMs: stat.mtimeMs, summary: s });

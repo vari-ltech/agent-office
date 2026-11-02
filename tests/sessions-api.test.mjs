@@ -143,3 +143,23 @@ test('Metadata refreshes on subsequent requests', async t => {
   assert.equal(row.live, false);
   assert.equal(row.background, false);
 });
+
+test('Repository attribution retains edits beyond the 50 most recent directories', async t => {
+  const base = workspace(t), older = repo(base, 'older'), latest = repo(base, 'latest');
+  const server = await api(t, base);
+  const nonRepositoryEdits = Array.from({ length: 51 }, (_, i) => ({
+    file: path.join(mkdir(base, `non-repository-${i}`), 'file.js'), at: i + 2,
+  }));
+  const olderEdit = { file: path.join(older, 'file.js'), at: 1 };
+  server.write('older-repository-only', transcript(base, [olderEdit, ...nonRepositoryEdits]));
+  server.write('older-and-latest-repositories', transcript(base, [
+    olderEdit, ...nonRepositoryEdits, { file: path.join(latest, 'file.js'), at: 54 },
+  ]));
+  const rows = await server.sessions();
+  await t.test('finds the only repository behind 51 newer non-repository directories', () => {
+    project(session(rows, 'older-repository-only'), older, [older], 'edits');
+  });
+  await t.test('lists both repositories with the most recently edited repository first', () => {
+    project(session(rows, 'older-and-latest-repositories'), latest, [latest, older], 'edits');
+  });
+});

@@ -1594,7 +1594,8 @@ function drawOverlay(s) {
 
   // cubicle nameplates on the front panel: status, name, project, level, title, context bar
   for (const room of world.rooms) {
-    const ss = room.session, a = agents.get(ss.id);
+    // room.session is the snapshot from the last layout; the agent holds the latest poll
+    const a = agents.get(room.session.id), ss = a?.session || room.session;
     const h = fs * 3 + 16 * dpr;
     const x = room.plaque.x * T * s, y = room.plaque.y * T * s;
     const w = room.plaque.w * T * s;
